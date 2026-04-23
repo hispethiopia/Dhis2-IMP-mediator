@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>DHIS2 → IMP Integration</title>
+</head>
+
+<body>
+
+<h2>DHIS2 Analytics Viewer</h2>
+
+<label>Data Element Group Set:</label><br>
+<select id="deGroupSet"></select>
+
+<br><br>
+
+<label>Data Element Group:</label><br>
+<select id="deGroup"></select>
+
+<br><br>
+
+<label>Period Type:</label><br>
+<select id="periodType"></select>
+
+<br><br>
+
+<label>Period:</label><br>
+<select id="period"></select>
+
+<br><br>
+
+<label>Organisation Unit:</label><br>
+<select id="orgUnit"></select>
+
+<br><br>
+
+<button onclick="loadAnalytics()">Load Data</button>
+
+<br><br>
+
+<table border="1" id="table">
+    <thead></thead>
+    <tbody></tbody>
+</table>
+
+<br>
+
+<button onclick="sendToExternal()">Send to IMP</button>
+
+<script>
+
+let analyticsData = [];
+let mapping = {};
+let groupSets = [];
+
+/* ---------------------------
+   PERIOD GENERATOR
+----------------------------*/
+function generatePeriods(type) {
+    const periods = [];
+    const year = new Date().getFullYear();
+
+    if (type === "Yearly") {
+        for (let y = year - 5; y <= year; y++) {
+            periods.push({ value: y, label: y });
+        }
+    }
+
+    if (type === "Monthly") {
+        for (let m = 1; m <= 12; m++) {
+            const mm = String(m).padStart(2, '0');
+            periods.push({
+                value: `${year}${mm}`,
+                label: `${year}-${mm}`
+            });
+        }
+    }
+
+    if (type === "six-monthly") {
+        periods.push({ value: `${year}S1`, label: `${year} S1` });
+        periods.push({ value: `${year}S2`, label: `${year} S2` });
+    }
+
+    if (type === "bi-weekly") {
+        for (let i = 1; i <= 26; i++) {
+            periods.push({
+                value: `${year}W${String(i).padStart(2,'0')}`,
+                label: `${year} W${i}`
+            });
+        }
+    }
+
+    return periods;
+}
+
+/* ---------------------------
+   UPDATE PERIODS
+----------------------------*/
+function updatePeriods() {
+    const type = periodType.value;
+    period.innerHTML = "";
+
+    generatePeriods(type).forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p.value;
+        opt.text = p.label;
+        period.appendChild(opt);
+    });
+}
+let Period_TYPE_ATTR_ID = null;
+/* ---------------------------
+   LOAD INITIAL DATA
+----------------------------*/
+async function loadData() {
+    const config = await fetch('/api/config').then(r => r.json());
+    PERIOD_TYPE_ATTR_ID = config.periodTypeAttributeId;
+
+    groupSets = await fetch('/api/dataElementGroupSets').then(r => r.json());
+    const ous = await fetch('/api/organisationUnits').then(r => r.json());
+
+    // GroupSets
+    groupSets.forEach(gs => {
+        const opt = document.createElement('option');
+        opt.value = gs.id;
+        opt.text = gs.displayName;
+        deGroupSet.appendChild(opt);
+    });
+
+    // OrgUnits
+    ous.forEach(o => {
+        const opt = document.createElement('option');
+        opt.value = o.id;
+        opt.text = o.displayName;
+        orgUnit.appendChild(opt);
+    });
+    deGroupSet.dispatchEvent(new Event('change'));
+
+}
+
+/* ---------------------------
+   GROUP SET CHANGE
+----------------------------*/
+deGroupSet.addEventListener('change', () => {
+
+    const selected = groupSets.find(gs => gs.id === deGroupSet.value);
+
+    // 🔹 Extract period_type attribute
+    const attr = selected.attributeValues?.find(a =>
+        a.attribute.id === PERIOD_TYPE_ATTR_ID
+    );
+    console.log("period_type attribute:", attr);
+    const type = attr?.value || "Yearly";
+
+    // Fill dropdown
+    periodType.innerHTML = "";
+    const opt = document.createElement('option');
+    opt.value = type;
+    opt.text = type;
+    periodType.appendChild(opt);
+
+    updatePeriods();
+
+    // Load groups
+    deGroup.innerHTML = "";
+    selected.dataElementGroups.forEach(g => {
+        const opt = document.createElement('option');
+        opt.value = g.id;
+        opt.text = g.displayName;
+        deGroup.appendChild(opt);
+    });
+});
+
+/* ---------------------------
+   LOAD ANALYTICS
+----------------------------*/
+async function loadAnalytics() {
+
+    const res = await fetch(
+        `/api/analytics?groupId=${deGroup.value}&period=${period.value}&orgUnit=${orgUnit.value}`
+    );
+
+    const data = await res.json();
+    analyticsData = data;
+
+    renderTable(data);
+}
+
+/* ---------------------------
+   TABLE
+----------------------------*/
+function renderTable(data) {
+    const thead = document.querySelector('#table thead');
+    const tbody = document.querySelector('#table tbody');
+
+    thead.innerHTML = '';
+    tbody.innerHTML = '';
+
+    if (!data.length) return;
+    const hiddenColumns = ['dx', 'ou'];
+
+    const headers = Object.keys(data[0]).filter(h => !hiddenColumns.includes(h));
+
+    const trHead = document.createElement('tr');
+    headers.forEach(h => {
+        const th = document.createElement('th');
+        th.textContent = h;
+        trHead.appendChild(th);
+    });
+
+    thead.appendChild(trHead);
+
+    data.forEach(row => {
+        const tr = document.createElement('tr');
+        headers.forEach(h => {
+            const td = document.createElement('td');
+            td.textContent = row[h];
+            tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+    });
+}
+
+/* ---------------------------
+   SEND
+----------------------------*/
+async function sendToExternal() {
+
+    if (!analyticsData.length) {
+        alert("Load data first");
+        return;
+    }
+
+    const res = await fetch('/api/pushData', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(analyticsData)
+    });
+
+    const result = await res.json();
+    alert(result.message || result.error);
+}
+
+/* ---------------------------
+   INIT
+----------------------------*/
+loadData();
+
+</script>
+
+</body>
+</html>
