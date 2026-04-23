@@ -1,56 +1,193 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <title>DHIS2 → IMP Integration</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+   
 </head>
-
 <body>
 
-<h2>DHIS2 Analytics Viewer</h2>
+<div class="orb orb-1"></div>
+<div class="orb orb-2"></div>
 
-<label>Data Element Group Set:</label><br>
-<select id="deGroupSet"></select>
+<!-- ========== LOGIN PAGE ========== -->
+<div id="loginPage">
+    <div class="login-card">
+        <div class="login-logo">
+            <div class="dot"></div>
+            <span>DHIS2 → IMP</span>
+        </div>
+        <h1 class="login-title">Sign in to<br><span>your workspace</span></h1>
+        <p class="login-sub">Enter your credentials to access the integration dashboard.</p>
 
-<br><br>
+        <div class="form-group">
+            <label>Username</label>
+            <input type="text" id="loginUsername" placeholder="your@email.com" autocomplete="username">
+        </div>
+        <div class="form-group">
+            <label>Password</label>
+            <input type="password" id="loginPassword" placeholder="••••••••" autocomplete="current-password">
+        </div>
 
-<label>Data Element Group:</label><br>
-<select id="deGroup"></select>
+        <button class="btn-primary" onclick="handleLogin()">Sign In →</button>
+        <div class="login-error" id="loginError"></div>
+    </div>
+</div>
 
-<br><br>
+<!-- ========== MAIN APP ========== -->
+<div id="appPage">
+    <header class="header">
+        <div class="header-brand">
+            <div class="brand-icon">
+                <img src="/collaboration.png" alt="Logo" style="width: 24px; height: 24px; object-fit: contain;">
 
-<label>Period Type:</label><br>
-<select id="periodType"></select>
+            </div>
+            <div class="brand-name">DHIS2 <span>→</span> IMP</div>
+        </div>
+        <div class="header-right">
+            <div class="status-badge">
+                <div class="status-dot"></div>
+                Connected
+            </div>
+            <button class="btn-logout" onclick="handleLogout()">Sign out</button>
+        </div>
+    </header>
 
-<br><br>
+    <main class="main">
+        <div class="page-title">Dhis2 to IMP Mediator</div>
+        <div class="page-sub">Query DHIS2 data and push it to IMP in one click.</div>
 
-<label>Period:</label><br>
-<select id="period"></select>
+        <!-- FILTERS -->
+        <div class="filter-panel">
+            <div class="filter-panel-title">🔍 Query Parameters</div>
+            <div class="filter-grid">
+                <div class="field-group">
+                    <label>Group Set</label>
+                    <select id="deGroupSet"></select>
+                </div>
+                <div class="field-group">
+                    <label>Data Element Group</label>
+                    <select id="deGroup"></select>
+                </div>
+                <div class="field-group">
+                    <label>Period Type</label>
+                    <select id="periodType"></select>
+                </div>
+                <div class="field-group">
+                    <label>Period</label>
+                    <select id="period"></select>
+                </div>
+                <div class="field-group">
+                    <label>Organisation Unit</label>
+                    <select id="orgUnit"></select>
+                </div>
+                <div class="field-group">
+                    <label>&nbsp;</label>
+                    <button class="btn-load" onclick="loadAnalytics()" id="btnLoad">Load Data</button>
+                </div>
+            </div>
+        </div>
 
-<br><br>
+        <!-- DATA TABLE -->
+        <div class="data-panel">
+            <div class="data-panel-header">
+                <div class="data-panel-title">Results</div>
+                <div class="row-count" id="rowCount">No data loaded</div>
+            </div>
 
-<label>Organisation Unit:</label><br>
-<select id="orgUnit"></select>
+            <div class="table-wrapper">
+                <table id="table">
+                    <thead></thead>
+                    <tbody>
+                        <tr>
+                            <td colspan="10">
+                                <div class="empty-state">
+                                    <div class="icon">📊</div>
+                                    <p>Select filters above and click <strong>Load Data</strong> to begin.</p>
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
 
-<br><br>
+            <div class="footer-actions">
+                <div class="footer-info" id="footerInfo">—</div>
+                <button class="btn-send" onclick="sendToExternal()" id="btnSend">
+                    ↑ Push to IMP
+                </button>
+            </div>
+        </div>
+    </main>
+</div>
 
-<button onclick="loadAnalytics()">Load Data</button>
-
-<br><br>
-
-<table border="1" id="table">
-    <thead></thead>
-    <tbody></tbody>
-</table>
-
-<br>
-
-<button onclick="sendToExternal()">Send to IMP</button>
+<!-- TOAST -->
+<div class="toast" id="toast">
+    <div class="toast-title" id="toastTitle"></div>
+    <div id="toastMsg"></div>
+</div>
 
 <script>
 
 let analyticsData = [];
-let mapping = {};
 let groupSets = [];
+let PERIOD_TYPE_ATTR_ID = null;
+
+/* ---------------------------
+   LOGIN
+----------------------------*/
+async function handleLogin() {
+    const username = document.getElementById('loginUsername').value.trim();
+    const password = document.getElementById('loginPassword').value;
+    const errEl = document.getElementById('loginError');
+    const btn = document.querySelector('.btn-primary');
+
+    errEl.style.display = 'none';
+
+    if (!username || !password) {
+        errEl.textContent = 'Please enter both username and password.';
+        errEl.style.display = 'block';
+        return;
+    }
+
+    btn.textContent = 'Signing in…';
+    btn.disabled = true;
+
+    try {
+        const res = await fetch('/api/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+
+        if (!res.ok) throw new Error('Invalid credentials');
+
+        document.getElementById('loginPage').style.display = 'none';
+        document.getElementById('appPage').style.display = 'block';
+        loadData();
+
+    } catch (e) {
+        errEl.textContent = e.message || 'Login failed. Please try again.';
+        errEl.style.display = 'block';
+        btn.textContent = 'Sign In →';
+        btn.disabled = false;
+    }
+}
+
+function handleLogout() {
+    document.getElementById('loginPage').style.display = 'flex';
+    document.getElementById('appPage').style.display = 'none';
+    analyticsData = [];
+    document.getElementById('loginPassword').value = '';
+}
+
+// Allow Enter key on login
+document.getElementById('loginPassword').addEventListener('keydown', e => {
+    if (e.key === 'Enter') handleLogin();
+});
 
 /* ---------------------------
    PERIOD GENERATOR
@@ -60,45 +197,30 @@ function generatePeriods(type) {
     const year = new Date().getFullYear();
 
     if (type === "Yearly") {
-        for (let y = year - 5; y <= year; y++) {
-            periods.push({ value: y, label: y });
-        }
+        for (let y = year - 5; y <= year; y++) periods.push({ value: y, label: y });
     }
-
     if (type === "Monthly") {
         for (let m = 1; m <= 12; m++) {
             const mm = String(m).padStart(2, '0');
-            periods.push({
-                value: `${year}${mm}`,
-                label: `${year}-${mm}`
-            });
+            periods.push({ value: `${year}${mm}`, label: `${year}-${mm}` });
         }
     }
-
     if (type === "six-monthly") {
         periods.push({ value: `${year}S1`, label: `${year} S1` });
         periods.push({ value: `${year}S2`, label: `${year} S2` });
     }
-
     if (type === "bi-weekly") {
         for (let i = 1; i <= 26; i++) {
-            periods.push({
-                value: `${year}W${String(i).padStart(2,'0')}`,
-                label: `${year} W${i}`
-            });
+            periods.push({ value: `${year}W${String(i).padStart(2,'0')}`, label: `${year} W${i}` });
         }
     }
-
     return periods;
 }
 
-/* ---------------------------
-   UPDATE PERIODS
-----------------------------*/
 function updatePeriods() {
-    const type = periodType.value;
+    const type = document.getElementById('periodType').value;
+    const period = document.getElementById('period');
     period.innerHTML = "";
-
     generatePeriods(type).forEach(p => {
         const opt = document.createElement('option');
         opt.value = p.value;
@@ -106,7 +228,7 @@ function updatePeriods() {
         period.appendChild(opt);
     });
 }
-let Period_TYPE_ATTR_ID = null;
+
 /* ---------------------------
    LOAD INITIAL DATA
 ----------------------------*/
@@ -117,7 +239,7 @@ async function loadData() {
     groupSets = await fetch('/api/dataElementGroupSets').then(r => r.json());
     const ous = await fetch('/api/organisationUnits').then(r => r.json());
 
-    // GroupSets
+    const deGroupSet = document.getElementById('deGroupSet');
     groupSets.forEach(gs => {
         const opt = document.createElement('option');
         opt.value = gs.id;
@@ -125,32 +247,29 @@ async function loadData() {
         deGroupSet.appendChild(opt);
     });
 
-    // OrgUnits
+    const orgUnit = document.getElementById('orgUnit');
     ous.forEach(o => {
         const opt = document.createElement('option');
         opt.value = o.id;
         opt.text = o.displayName;
         orgUnit.appendChild(opt);
     });
-    deGroupSet.dispatchEvent(new Event('change'));
 
+    deGroupSet.dispatchEvent(new Event('change'));
 }
 
 /* ---------------------------
    GROUP SET CHANGE
 ----------------------------*/
-deGroupSet.addEventListener('change', () => {
-
+document.getElementById('deGroupSet').addEventListener('change', () => {
+    const deGroupSet = document.getElementById('deGroupSet');
     const selected = groupSets.find(gs => gs.id === deGroupSet.value);
+    if (!selected) return;
 
-    // 🔹 Extract period_type attribute
-    const attr = selected.attributeValues?.find(a =>
-        a.attribute.id === PERIOD_TYPE_ATTR_ID
-    );
-    console.log("period_type attribute:", attr);
+    const attr = selected.attributeValues?.find(a => a.attribute.id === PERIOD_TYPE_ATTR_ID);
     const type = attr?.value || "Yearly";
 
-    // Fill dropdown
+    const periodType = document.getElementById('periodType');
     periodType.innerHTML = "";
     const opt = document.createElement('option');
     opt.value = type;
@@ -159,7 +278,7 @@ deGroupSet.addEventListener('change', () => {
 
     updatePeriods();
 
-    // Load groups
+    const deGroup = document.getElementById('deGroup');
     deGroup.innerHTML = "";
     selected.dataElementGroups.forEach(g => {
         const opt = document.createElement('option');
@@ -173,15 +292,27 @@ deGroupSet.addEventListener('change', () => {
    LOAD ANALYTICS
 ----------------------------*/
 async function loadAnalytics() {
+    const btn = document.getElementById('btnLoad');
+    btn.innerHTML = '<span class="spinner"></span> Loading…';
+    btn.disabled = true;
 
-    const res = await fetch(
-        `/api/analytics?groupId=${deGroup.value}&period=${period.value}&orgUnit=${orgUnit.value}`
-    );
+    try {
+        const groupId = document.getElementById('deGroup').value;
+        const period = document.getElementById('period').value;
+        const orgUnit = document.getElementById('orgUnit').value;
 
-    const data = await res.json();
-    analyticsData = data;
+        const res = await fetch(`/api/analytics?groupId=${groupId}&period=${period}&orgUnit=${orgUnit}`);
+        const data = await res.json();
+        analyticsData = data;
 
-    renderTable(data);
+        renderTable(data);
+        showToast('success', 'Data Loaded', `${data.length} rows fetched from DHIS2.`);
+    } catch (e) {
+        showToast('error', 'Load Failed', e.message);
+    } finally {
+        btn.textContent = 'Load Data';
+        btn.disabled = false;
+    }
 }
 
 /* ---------------------------
@@ -190,61 +321,99 @@ async function loadAnalytics() {
 function renderTable(data) {
     const thead = document.querySelector('#table thead');
     const tbody = document.querySelector('#table tbody');
+    const rowCount = document.getElementById('rowCount');
+    const footerInfo = document.getElementById('footerInfo');
 
     thead.innerHTML = '';
     tbody.innerHTML = '';
 
-    if (!data.length) return;
-    const hiddenColumns = ['dx', 'ou'];
+    if (!data.length) {
+        rowCount.textContent = 'No results';
+        tbody.innerHTML = `<tr><td colspan="10"><div class="empty-state"><div class="icon">🔍</div><p>No data found for the selected filters.</p></div></td></tr>`;
+        return;
+    }
 
+    const hiddenColumns = ['dx', 'ou'];
     const headers = Object.keys(data[0]).filter(h => !hiddenColumns.includes(h));
+
+    // Friendly header labels
+    const labelMap = {
+        dxName: 'Data Element',
+        ouName: 'Org Unit',
+        co: 'Category Option',
+        pe: 'Period',
+        value: 'Value'
+    };
 
     const trHead = document.createElement('tr');
     headers.forEach(h => {
         const th = document.createElement('th');
-        th.textContent = h;
+        th.textContent = labelMap[h] || h;
         trHead.appendChild(th);
     });
-
     thead.appendChild(trHead);
 
     data.forEach(row => {
         const tr = document.createElement('tr');
         headers.forEach(h => {
             const td = document.createElement('td');
-            td.textContent = row[h];
+            td.textContent = row[h] ?? '—';
+            if (h === 'value') td.classList.add('value-cell');
             tr.appendChild(td);
         });
         tbody.appendChild(tr);
     });
+
+    rowCount.textContent = `${data.length} rows`;
+    footerInfo.textContent = `${data.length} records ready to push`;
 }
 
 /* ---------------------------
-   SEND
+   SEND TO IMP
 ----------------------------*/
 async function sendToExternal() {
-
     if (!analyticsData.length) {
-        alert("Load data first");
+        showToast('error', 'No Data', 'Please load data first.');
         return;
     }
 
-    const res = await fetch('/api/pushData', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(analyticsData)
-    });
+    const btn = document.getElementById('btnSend');
+    btn.innerHTML = '<span class="spinner"></span> Pushing…';
+    btn.disabled = true;
 
-    const result = await res.json();
-    alert(result.message || result.error);
+    try {
+        const res = await fetch('/api/pushData', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(analyticsData)
+        });
+
+        const result = await res.json();
+
+        if (res.ok) {
+            showToast('success', 'Push Complete', result.message || 'Data sent successfully.');
+        } else {
+            showToast('error', 'Push Failed', result.error || 'Something went wrong.');
+        }
+    } catch (e) {
+        showToast('error', 'Push Failed', e.message);
+    } finally {
+        btn.innerHTML = '↑ Push to IMP';
+        btn.disabled = false;
+    }
 }
 
 /* ---------------------------
-   INIT
+   TOAST
 ----------------------------*/
-loadData();
+function showToast(type, title, msg) {
+    const toast = document.getElementById('toast');
+    document.getElementById('toastTitle').textContent = title;
+    document.getElementById('toastMsg').textContent = msg;
+    toast.className = `toast ${type} show`;
+    setTimeout(() => toast.classList.remove('show'), 4000);
+}
 
 </script>
-
 </body>
 </html>

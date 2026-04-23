@@ -18,6 +18,21 @@ const IMP_ID_ATTR = process.env.IMP_ID_ATTRIBUTE_ID;
 const MEASURE_TYPE_ATTR = process.env.MEASURE_TYPE_ATTRIBUTE_ID;
 const OU_IMP_ID_ATTR = process.env.OU_IMP_ID_ATTRIBUTE_ID;
 
+
+
+app.post('/api/login', async (req, res) => {
+    const { username, password } = req.body;
+    try {
+        // Verify credentials against DHIS2
+        await axios.get(`${DHIS2_BASE_URL}/me`, {
+            auth: { username, password }
+        });
+        res.json({ ok: true });
+    } catch (err) {
+        res.status(401).json({ error: 'Invalid credentials' });
+    }
+});
+
 /* =========================
    📦 FETCH GROUP SETS
 ========================= */
