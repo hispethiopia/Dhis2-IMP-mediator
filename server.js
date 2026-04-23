@@ -311,6 +311,14 @@ function getEndpoint(type) {
             return "project-outcome-measure-unit-distributions";
         case "project_output":
             return "project-output-measure-unit-distributions";
+        case "program_goal":
+            return "program-goal-measure-unit-distributions";
+        case "program_outcome":
+            return "program-outcome-measure-unit-distributions";
+        case "program_output":
+            return "program-output-measure-unit-distributions";
+        case "strategic":
+            return "strategic-measure-unit-distributions";
         default:
             throw new Error("Unknown type: " + type);
     }
@@ -345,7 +353,6 @@ app.post('/api/pushData', async (req, res) => {
 
         const token = await getToken();
 
-        // 🔁 Group by measure type
         const groupedByType = {};
         items.forEach(i => {
             if (!groupedByType[i.measure_type]) groupedByType[i.measure_type] = [];
@@ -359,7 +366,6 @@ app.post('/api/pushData', async (req, res) => {
             const baseUrl = `${process.env.IMP_BASE_URL}/${endpoint}`;
             const measureKey = `${type}_measure`;
 
-            // 🔍 Fetch all existing records for this type once
             const existingRes = await axios.get(baseUrl, {
                 headers: { Authorization: `Token ${token}` }
             });
@@ -380,25 +386,108 @@ app.post('/api/pushData', async (req, res) => {
                     continue;
                 }
 
-                // 1️⃣ PATCH data
-                const patchUrl = `${baseUrl}/${existing.id}`;
-                const patchPayload = {
-                    implementing_unit,
-                    [measureKey]: measureValue,
-                    period_distributions: [
-                        {
-                            name: `EFY ${Number(item.pe) - 7}`,
-                            start_date: `${item.pe}-07-08`,
-                            end_date: `${Number(item.pe) + 1}-07-07`,
-                            actual: item.actual,
-                            target: item.target,
-                            period_frequency: "annually"
-                        }
-                    ]
+                // 📅 DHIS2 pe=2025 → EFY 2017 → start: 2024-07-08, end: 2025-07-07
+                const targetStartDate = `${Number(item.pe) - 1}-07-08`;
+                const targetEndDate   = `${item.pe}-07-07`;
+                const efyYear = Number(item.pe) - 8;
+
+                console.log(`📅 DHIS2 pe=${item.pe} → EFY ${efyYear}, start=${targetStartDate}, end=${targetEndDate}`);
+
+                // ✅ All possible fields to update
+                const allFields = {
+                    actual:        item.actual        ?? null,
+                    target:        item.target        ?? null,
+                    actual_male:   item.actual_male   ?? null,
+                    target_male:   item.target_male   ?? null,
+                    actual_female: item.actual_female ?? null,
+                    target_female: item.target_female ?? null,
+                    actual_youth:  item.actual_youth  ?? null,
+                    target_youth:  item.target_youth  ?? null,
+                    actual_budget: item.actual_budget ?? null,
+                    target_budget: item.target_budget ?? null,
                 };
 
+                let patchPayload;
+
+                if (!existing.period_distributions) {
+                    // ✅ CASE 1: No nested periods — wrap in period_distributions using EFY dates
+                    console.log("📋 No period_distributions, building period from EFY dates");
+                
+                    const filteredFields = Object.fromEntries(
+                        Object.entries(allFields).filter(([k, v]) => v !== null)
+                    );
+                
+                    patchPayload = {
+                        implementing_unit,
+                        [measureKey]: measureValue,
+                        period_distributions: [
+                            {
+                                name: `EFY ${efyYear}`,
+                                start_date: targetStartDate,
+                                end_date: targetEndDate,
+                                period_frequency: "annually",
+                                ...filteredFields
+                            }
+                        ]
+                    };
+                } else {
+                    // ✅ CASE 2: Has nested period_distributions — find and update matching period
+                    function findPeriod(distributions) {
+                        for (const dist of distributions) {
+                            if (dist.start_date === targetStartDate && dist.end_date === targetEndDate) {
+                                return dist;
+                            }
+                            if (dist.children) {
+                                const found = findPeriod(dist.children);
+                                if (found) return found;
+                            }
+                        }
+                        return null;
+                    }
+
+                    const matchedPeriod = findPeriod(existing.period_distributions);
+
+                    if (!matchedPeriod) {
+                        console.warn(`⚠️ No matching period for pe=${item.pe} → EFY ${efyYear}, start=${targetStartDate}, end=${targetEndDate}`);
+                        console.log("📋 Available periods:", existing.period_distributions.map(d => ({
+                            name: d.name,
+                            start: d.start_date,
+                            end: d.end_date
+                        })));
+                        results.push({ type, imp_id: item.imp_id, status: "period not found" });
+                        continue;
+                    }
+
+                    console.log(`✅ Matched period: ${matchedPeriod.name}`);
+
+                    const filteredFields = Object.fromEntries(
+                        Object.entries(allFields).filter(([k, v]) => k in matchedPeriod && v !== null)
+                    );
+
+                    const updatedPeriod = { ...matchedPeriod, ...filteredFields };
+
+                    function replacePeriod(distributions) {
+                        return distributions.map(dist => {
+                            if (dist.start_date === targetStartDate && dist.end_date === targetEndDate) {
+                                return updatedPeriod;
+                            }
+                            if (dist.children) {
+                                return { ...dist, children: replacePeriod(dist.children) };
+                            }
+                            return dist;
+                        });
+                    }
+
+                    patchPayload = {
+                        implementing_unit,
+                        [measureKey]: measureValue,
+                        period_distributions: replacePeriod(existing.period_distributions)
+                    };
+                }
+
+                const patchUrl = `${baseUrl}/${existing.id}`;
                 console.log(`📝 PATCHing [${type}] to:`, patchUrl);
-                console.log("📦 Payload:", patchPayload);
+                console.log("📦 Payload:", JSON.stringify(patchPayload, null, 2));
 
                 await axios.patch(patchUrl, patchPayload, {
                     headers: {
