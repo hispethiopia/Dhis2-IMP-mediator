@@ -20,7 +20,7 @@
             <div class="dot"></div>
             <span>DHIS2 → IMP</span>
         </div>
-        <h1 class="login-title">Sign in to<br><span>your workspace</span></h1>
+        <h1 class="login-title">Sign in to<br><span>your integeration platform</span></h1>
         <p class="login-sub">Enter your credentials to access the integration dashboard.</p>
 
         <div class="form-group">
@@ -206,8 +206,10 @@ function generatePeriods(type) {
         }
     }
     if (type === "six-monthly") {
-        periods.push({ value: `${year}S1`, label: `${year} S1` });
-        periods.push({ value: `${year}S2`, label: `${year} S2` });
+        for (let y = year - 5; y <= year; y++) {
+            periods.push({ value: `${y}S1`, label: `${y} S1` });
+            periods.push({ value: `${y}S2`, label: `${y} S2` });
+    }
     }
     if (type === "bi-weekly") {
         for (let i = 1; i <= 26; i++) {

@@ -18,7 +18,8 @@ const IMP_ID_ATTR = process.env.IMP_ID_ATTRIBUTE_ID;
 const MEASURE_TYPE_ATTR = process.env.MEASURE_TYPE_ATTRIBUTE_ID;
 const OU_IMP_ID_ATTR = process.env.OU_IMP_ID_ATTRIBUTE_ID;
 
-
+let successCount = 0;
+let failureCount = 0;
 
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
@@ -383,6 +384,7 @@ app.post('/api/pushData', async (req, res) => {
                 if (!existing) {
                     console.warn(`⚠️ No existing record found for type=${type}, imp_id=${item.imp_id}, unit=${item.implementing_unit}`);
                     results.push({ type, imp_id: item.imp_id, status: "not found" });
+                    failureCount++;
                     continue;
                 }
 
@@ -455,6 +457,7 @@ app.post('/api/pushData', async (req, res) => {
                             end: d.end_date
                         })));
                         results.push({ type, imp_id: item.imp_id, status: "period not found" });
+                        failureCount++;
                         continue;
                     }
 
@@ -502,7 +505,7 @@ app.post('/api/pushData', async (req, res) => {
                 // 2️⃣ Approval request
                 const approvalUrl = `${baseUrl}/${existing.id}/approval-request/`;
                 console.log(`📤 Approval for [${type}]:`, approvalUrl);
-
+                successCount++;
                 const approvalResponse = await axios.put(
                     approvalUrl,
                     { comments: "Auto-submitted from DHIS2 integration" },
@@ -525,8 +528,27 @@ app.post('/api/pushData', async (req, res) => {
             }
         }
 
-        res.json({ message: "✅ All done", results });
-
+        if (successCount === 0) {
+            return res.status(400).json({
+                error: "No records were updated. All items failed or were not found.",
+                results
+            });
+        }
+        
+        if (failureCount > 0) {
+            return res.status(207).json({   // 207 = partial success
+                message: "⚠️ Partial success",
+                successCount,
+                failureCount,
+                results
+            });
+        }
+        
+        res.json({
+            message: "✅ All records updated successfully",
+            successCount,
+            results
+        });
     } catch (err) {
         console.error("❌ Push error:", err.response?.data || err.message);
         res.status(500).json({ error: err.response?.data || err.message });
