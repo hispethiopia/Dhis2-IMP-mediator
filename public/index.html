@@ -184,45 +184,77 @@ function handleLogout() {
     document.getElementById('loginPassword').value = '';
 }
 
-// Allow Enter key on login
-document.getElementById('loginPassword').addEventListener('keydown', e => {
-    if (e.key === 'Enter') handleLogin();
-});
+/* ---------------------------
+   BI-WEEKLY FIX (IMPORTANT)
+----------------------------*/
+function generateBiWeeklyPeriods(year) {
+    const periods = [];
+    let start = new Date(year, 0, 1);
+
+    while (start.getDay() !== 1) {
+        start.setDate(start.getDate() + 1);
+    }
+
+    for (let i = 1; i <= 26; i++) {
+        const end = new Date(start);
+        end.setDate(start.getDate() + 13);
+
+        const startStr = start.toISOString().slice(0, 10);
+        const endStr = end.toISOString().slice(0, 10);
+
+        periods.push({
+            value: `${year}BiW${String(i).padStart(2, '0')}`,
+            label: `Bi-Week ${i}: ${startStr} → ${endStr}`
+        });
+
+        start.setDate(start.getDate() + 14);
+    }
+
+    return periods;
+}
 
 /* ---------------------------
    PERIOD GENERATOR
 ----------------------------*/
 function generatePeriods(type) {
-    const periods = [];
     const year = new Date().getFullYear();
+    let periods = [];
 
-    if (type === "Yearly") {
-        for (let y = year - 5; y <= year; y++) periods.push({ value: y, label: y });
+    type = (type || "").toLowerCase();
+
+    if (type === "yearly") {
+        for (let y = year - 5; y <= year; y++) {
+            periods.push({ value: y, label: y });
+        }
     }
-    if (type === "Monthly") {
+
+    else if (type === "monthly") {
         for (let m = 1; m <= 12; m++) {
             const mm = String(m).padStart(2, '0');
             periods.push({ value: `${year}${mm}`, label: `${year}-${mm}` });
         }
     }
-    if (type === "six-monthly") {
+
+    else if (type === "six-monthly") {
         for (let y = year - 5; y <= year; y++) {
             periods.push({ value: `${y}S1`, label: `${y} S1` });
             periods.push({ value: `${y}S2`, label: `${y} S2` });
-    }
-    }
-    if (type === "bi-weekly") {
-        for (let i = 1; i <= 26; i++) {
-            periods.push({ value: `${year}W${String(i).padStart(2,'0')}`, label: `${year} W${i}` });
         }
     }
+
+    else if (type.includes("bi")) {
+        periods = generateBiWeeklyPeriods(year); // ✅ FIXED (RETURN VALUE)
+    }
+
     return periods;
 }
 
 function updatePeriods() {
     const type = document.getElementById('periodType').value;
     const period = document.getElementById('period');
+
     period.innerHTML = "";
+
     generatePeriods(type).forEach(p => {
         const opt = document.createElement('option');
         opt.value = p.value;
@@ -242,6 +274,7 @@ async function loadData() {
     const ous = await fetch('/api/organisationUnits').then(r => r.json());
 
     const deGroupSet = document.getElementById('deGroupSet');
+
     groupSets.forEach(gs => {
         const opt = document.createElement('option');
         opt.value = gs.id;
@@ -268,20 +301,26 @@ document.getElementById('deGroupSet').addEventListener('change', () => {
     const selected = groupSets.find(gs => gs.id === deGroupSet.value);
     if (!selected) return;
 
-    const attr = selected.attributeValues?.find(a => a.attribute.id === PERIOD_TYPE_ATTR_ID);
-    const type = attr?.value || "Yearly";
+    const attr = selected.attributeValues?.find(
+        a => a.attribute.id === PERIOD_TYPE_ATTR_ID
+    );
+
+    let type = (attr?.value || "Yearly").toLowerCase();
 
     const periodType = document.getElementById('periodType');
     periodType.innerHTML = "";
+
     const opt = document.createElement('option');
     opt.value = type;
     opt.text = type;
     periodType.appendChild(opt);
 
+    periodType.value = type;
     updatePeriods();
 
     const deGroup = document.getElementById('deGroup');
     deGroup.innerHTML = "";
+
     selected.dataElementGroups.forEach(g => {
         const opt = document.createElement('option');
         opt.value = g.id;
@@ -290,9 +329,7 @@ document.getElementById('deGroupSet').addEventListener('change', () => {
     });
 });
 
-/* ---------------------------
-   LOAD ANALYTICS
-----------------------------*/
+
 async function loadAnalytics() {
     const btn = document.getElementById('btnLoad');
     btn.innerHTML = '<span class="spinner"></span> Loading…';
