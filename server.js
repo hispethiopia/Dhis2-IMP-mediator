@@ -68,28 +68,31 @@ function gregorianToEthiopian(gYear, gMonth, gDay) {
         'Ginbot', 'Sene', 'Hamle', 'Nehase', 'Pagume'
     ];
 
-    // Julian Day Number for the Gregorian date
-    const a = Math.floor((14 - gMonth) / 12);
-    const y = gYear + 4800 - a;
-    const m = gMonth + 12 * a - 3;
-    const jdn = gDay + Math.floor((153 * m + 2) / 5) + 365 * y
+    const jdn = Math.floor((14 - gMonth) / 12);
+    const y = gYear + 4800 - jdn;
+    const m = gMonth + 12 * jdn - 3;
+    const julianDay = gDay + Math.floor((153 * m + 2) / 5) + 365 * y
         + Math.floor(y / 4) - Math.floor(y / 100)
         + Math.floor(y / 400) - 32045;
 
-    // Ethiopian epoch JDN = 1724221 (Meskerem 1, 1 ET = August 29, 8 AD)
-    const ethiopianEpoch = 1724221;
-    const r = (jdn - ethiopianEpoch) % 1461;
-    const n = (r % 365) + 365 * Math.floor(r / 1460);
+    // Ethiopian epoch
+    const ethioEpoch = 1724220; // corrected from 1724221
+    const diff = julianDay - ethioEpoch;
 
-    const eYear  = Math.floor((jdn - ethiopianEpoch) / 1461) * 4 + Math.floor(r / 365) - Math.floor(r / 1460);
-    const eMonth = Math.floor(n / 30) + 1;
-    const eDay   = (n % 30) + 1;
+    const eYear = Math.floor(diff / 365.25) ; // rough
+    // More precise:
+    const r4 = diff % 1461;  // 1461 = 4*365 + 1 (leap cycle)
+    const n = r4 % 365 + 365 * Math.floor(r4 / 1460);
+
+    const preciseYear = Math.floor(diff / 1461) * 4 + Math.floor(r4 / 365) - Math.floor(r4 / 1460);
+    const preciseMonth = Math.floor(n / 30) + 1;
+    const preciseDay = (n % 30) + 1;
 
     return {
-        year: eYear,
-        month: eMonth,
-        monthName: ETHIOPIAN_MONTHS[eMonth - 1] || 'Pagume',
-        day: eDay
+        year: preciseYear+1,
+        month: preciseMonth,
+        monthName: ETHIOPIAN_MONTHS[preciseMonth - 1] || 'Pagume',
+        day: preciseDay
     };
 }
 
@@ -139,16 +142,16 @@ function findPeriodForActivity(distributions, gStart, gEnd) {
 }
 function mapToStatus(value) {
     if (value === null || value === undefined || value === "") {
-        return null; // 🚫 skip
+        return null;
     }
 
-    const v = String(value).toLowerCase().replace(/\s+/g, '');  // strip spaces
+    const v = String(value).toLowerCase().replace(/\s+/g, '');
 
     if (v === "1" || v === "true" || v === "complete") return "complete";
-    if (v === "0" || v === "false" || v === "incomplete") return "Not Started";
-    if (v === "in progress") return "in progress";
+    if (v === "0" || v === "false" || v === "incomplete" || v === "notstarted") return "not started"; // ← fix
+    if (v === "inprogress") return "in progress"; // ← fix
 
-    return null; // unknown → skip
+    return null;
 }
 
 async function transformActivitiesPayload(data) {
@@ -492,6 +495,14 @@ async function getToken() {
 /* =========================
    🚀 PUSH DATA
 ========================= */
+function toEthiopianHMName(startDateStr) {
+    const [y, m, d] = startDateStr.split('-').map(Number);
+    const eth = gregorianToEthiopian(y, m, d);
+    const half = eth.day <= 15 ? 'HM-1' : 'HM-2';
+    const name = `${half} ${eth.monthName} ${eth.year}`;
+    console.log(`🗓️ ${startDateStr} → ET: day=${eth.day}, month=${eth.monthName}, year=${eth.year} → ${name}`);
+    return name;
+}
 app.post('/api/pushData', async (req, res) => {
     try {
         const rawData = req.body;
@@ -790,9 +801,28 @@ async function pushActivityItems(items, token) {
             continue;
         }
 
-        // 5️⃣ Build updated period_distributions
-        let periods = Array.isArray(unitDist.period_distributions)
-            ? [...unitDist.period_distributions]
+        // 5️⃣ Fetch the latest full unit distribution object from the API
+        let existingUnitDist;
+        try {
+            const getRes = await axios.get(`${baseUrl}/${unitDist.id}/`, {
+                headers: { Authorization: `Token ${token}` }
+            });
+            existingUnitDist = getRes.data;
+            console.log(`✅ Fetched full unit distribution:`, JSON.stringify(existingUnitDist, null, 2));
+        } catch (getErr) {
+            console.error(`❌ Failed to fetch unit distribution id=${unitDist.id}:`, getErr.response?.data || getErr.message);
+            results.push({
+                activity: activity.id,
+                unit: item.implementing_unit,
+                result: "❌ failed to fetch unit distribution",
+                error: getErr.response?.data || getErr.message
+            });
+            continue;
+        }
+
+        // 6️⃣ Build updated period_distributions
+        let periods = Array.isArray(existingUnitDist.period_distributions)
+            ? [...existingUnitDist.period_distributions]
             : [];
 
         const matchedIndex = periods.findIndex(
@@ -800,30 +830,64 @@ async function pushActivityItems(items, token) {
         );
 
         if (matchedIndex === -1) {
-            console.log(`➕ No matching period found, creating new: ${start} → ${end}`);
-            periods.push({
-                name: `${start} - ${end}`,
-                start_date: start,
-                end_date: end,
-                status
-            });
+            const ethName = toEthiopianHMName(start);
+        
+            // Check if a period with this Ethiopian name already exists
+            const duplicateNameIndex = periods.findIndex(p => p.name === ethName);
+        
+            if (duplicateNameIndex !== -1) {
+                // Update the existing one with the correct dates and status
+                console.log(`♻️ Period with name "${ethName}" already exists, updating it with correct dates`);
+                periods[duplicateNameIndex] = {
+                    ...periods[duplicateNameIndex],
+                    name: ethName,
+                    start_date: start,
+                    end_date: end,
+                    status,
+                    period_frequency: "biweekly"
+                };
+            } else {
+                console.log(`➕ Creating new period: ${ethName} (${start} → ${end})`);
+                periods.push({
+                    name: ethName,
+                    start_date: start,
+                    end_date: end,
+                    status,
+                    period_frequency: "biweekly"
+                });
+            }
         } else {
-            console.log(`✏️ Updating existing period: ${start} → ${end}`);
+            const ethName = toEthiopianHMName(start);
+            console.log(`✏️ Updating existing period → renaming to: ${ethName} (${start} → ${end})`);
             periods[matchedIndex] = {
                 ...periods[matchedIndex],
-                status
+                name: ethName,
+                start_date: start,
+                end_date: end,
+                status,
+                period_frequency: "biweekly"
             };
         }
 
-        // 6️⃣ PATCH unit distribution
-        const patchUrl = `${baseUrl}/${unitDist.id}/`;
-        console.log(`📝 PATCHing activity unit distribution: ${patchUrl}`);
-        console.log("📦 Payload:", JSON.stringify({ period_distributions: periods }, null, 2));
+        // 7️⃣ Build full PUT payload (mirrors Postman structure)
+        const putPayload = {
+            activity: existingUnitDist.activity,
+            implementing_unit: existingUnitDist.implementing_unit,
+            start_date: existingUnitDist.start_date,
+            end_date: existingUnitDist.end_date,
+            status:  existingUnitDist.status,
+            children: null,
+            period_distributions: periods
+        };
 
+        console.log(`📝 PUTting activity unit distribution: ${baseUrl}/${unitDist.id}/`);
+        console.log("📦 Payload:", JSON.stringify(putPayload, null, 2));
+
+        // 8️⃣ PUT (not PATCH)
         try {
-            await axios.patch(
-                patchUrl,
-                { period_distributions: periods },
+            await axios.put(
+                `${baseUrl}/${unitDist.id}/`,
+                putPayload,
                 {
                     headers: {
                         Authorization: `Token ${token}`,
@@ -831,56 +895,27 @@ async function pushActivityItems(items, token) {
                     }
                 }
             );
-            console.log(`✅ PATCH success for unit distribution id=${unitDist.id}`);
-        } catch (patchErr) {
-            console.error(`❌ PATCH failed for unit distribution id=${unitDist.id}:`, patchErr.response?.data || patchErr.message);
+            console.log(`✅ PUT success for unit distribution id=${unitDist.id}`);
+        } catch (putErr) {
+            console.error(`❌ PUT failed:`, putErr.response?.data || putErr.message);
             results.push({
                 activity: activity.id,
                 unit: item.implementing_unit,
                 period: `${start} → ${end}`,
-                result: "❌ patch failed",
-                error: patchErr.response?.data || patchErr.message
+                result: "❌ put failed",
+                error: putErr.response?.data || putErr.message
             });
             continue;
         }
 
-        // 7️⃣ POST approval request
-        const activityApprovalUrl = `${baseUrl}/${unitDist.id}/approval-request/`;
-        console.log(`📤 Posting approval request: ${activityApprovalUrl}`);
 
-        try {
-            await axios.post(
-                activityApprovalUrl,
-                { comments: "Auto-submitted from DHIS2 integration" },
-                {
-                    headers: {
-                        Authorization: `Token ${token}`,
-                        'Content-Type': 'application/json'
-                    }
-                }
-            );
-            console.log(`✅ Approval request sent for unit distribution id=${unitDist.id}`);
-        } catch (approvalErr) {
-            console.error(`❌ Approval failed for unit distribution id=${unitDist.id}:`, approvalErr.response?.data || approvalErr.message);
-            results.push({
-                activity: activity.id,
-                unit: item.implementing_unit,
-                period: `${start} → ${end}`,
-                status,
-                result: "⚠️ patched but approval failed",
-                error: approvalErr.response?.data || approvalErr.message
-            });
-            continue;
-        }
-
-        // 8️⃣ Success
         results.push({
             activity: activity.id,
             unitDistributionId: unitDist.id,
             unit: item.implementing_unit,
             period: `${start} → ${end}`,
             status,
-            result: "✅ patched + approval requested"
+            result: "✅ PUT success (approval pending backend support)"
         });
     }
 
