@@ -231,9 +231,16 @@ app.get('/api/config', (req, res) => {
 ========================= */
 app.get('/api/organisationUnits', async (req, res) => {
     try {
+        const GROUP_ID = process.env.OU_GROUP_ID;
+        const ATTR_ID = process.env.OU_IMP_ID_ATTRIBUTE_ID;
+
+        // ✅ Fetch ONLY the group members (fast)
         const response = await axios.get(
-            `${DHIS2_BASE_URL}/organisationUnits?paging=false&fields=id,displayName,attributeValues[attribute[id],value]`,
+            `${DHIS2_BASE_URL}/organisationUnitGroups/${GROUP_ID}`,
             {
+                params: {
+                    fields: 'organisationUnits[id,displayName,attributeValues[attribute[id],value]]'
+                },
                 auth: {
                     username: USERNAME,
                     password: PASSWORD
@@ -241,10 +248,9 @@ app.get('/api/organisationUnits', async (req, res) => {
             }
         );
 
-        const ATTR_ID = process.env.OU_IMP_ID_ATTRIBUTE_ID; 
+        const orgUnits = response.data.organisationUnits || [];
 
-        // ✅ FILTER ONLY ORG UNITS THAT HAVE IMP ID
-        const filtered = response.data.organisationUnits
+        const filtered = orgUnits
             .map(ou => {
                 const attr = ou.attributeValues?.find(
                     a => a.attribute.id === ATTR_ID
@@ -255,7 +261,7 @@ app.get('/api/organisationUnits', async (req, res) => {
                 return {
                     id: ou.id,
                     displayName: ou.displayName,
-                    imp_id: attr.value // useful later
+                    imp_id: attr.value
                 };
             })
             .filter(Boolean);
@@ -263,11 +269,10 @@ app.get('/api/organisationUnits', async (req, res) => {
         res.json(filtered);
 
     } catch (err) {
-        console.error("❌ OrgUnit error:", err.message);
+        console.error("❌ OrgUnit error:", err.response?.data || err.message);
         res.status(500).json({ error: err.message });
     }
 });
-
 /* =========================
    📊 ANALYTICS
 ========================= */
