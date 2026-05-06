@@ -948,7 +948,8 @@ async function pushActivityItems(items, token) {
 ========================= */
 app.get('/api/config', (req, res) => {
     res.json({
-        periodTypeAttributeId: process.env.PERIOD_TYPE_ATTRIBUTE_ID
+        periodTypeAttributeId: process.env.PERIOD_TYPE_ATTRIBUTE_ID,
+        resultTypeAttributeId: process.env.RESULT_TYPE_ID 
     });
 });
 

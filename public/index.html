@@ -135,7 +135,7 @@
 let analyticsData = [];
 let groupSets = [];
 let PERIOD_TYPE_ATTR_ID = null;
-
+let RESULT_TYPE_ATTR_ID = null;
 /* ---------------------------
    LOGIN
 ----------------------------*/
@@ -197,7 +197,7 @@ document.getElementById('deGroup').addEventListener('change', () => {
 
     // 🔑 GET RESULT TYPE FROM GROUP
     const resultAttr = selectedGroup.attributeValues?.find(
-        a => a.attribute.id === 'cwEYtMqAfie'
+        a => a.attribute.id === RESULT_TYPE_ATTR_ID
     );
 
     const measureType = resultAttr?.value;
@@ -305,6 +305,7 @@ function updatePeriods() {
 async function loadData() {
     const config = await fetch('/api/config').then(r => r.json());
     PERIOD_TYPE_ATTR_ID = config.periodTypeAttributeId;
+    RESULT_TYPE_ATTR_ID = config.resultTypeAttributeId; 
 
     groupSets = await fetch('/api/dataElementGroupSets').then(r => r.json());
     const ous = await fetch('/api/organisationUnits').then(r => r.json());
