@@ -184,6 +184,42 @@ function handleLogout() {
     document.getElementById('loginPassword').value = '';
 }
 
+document.getElementById('deGroup').addEventListener('change', () => {
+    const deGroupSet = document.getElementById('deGroupSet');
+    const selectedSet = groupSets.find(gs => gs.id === deGroupSet.value);
+    if (!selectedSet) return;
+
+    const selectedGroup = selectedSet.dataElementGroups.find(
+        g => g.id === document.getElementById('deGroup').value
+    );
+
+    if (!selectedGroup) return;
+
+    // 🔑 GET RESULT TYPE FROM GROUP
+    const resultAttr = selectedGroup.attributeValues?.find(
+        a => a.attribute.id === 'cwEYtMqAfie'
+    );
+
+    const measureType = resultAttr?.value;
+
+    console.log('📊 Selected group measureType:', measureType);
+
+    // 🔁 MAP → PERIOD TYPE
+    const periodTypeValue = getPeriodTypeFromMeasure(measureType);
+
+    // 🎯 SET DROPDOWN
+    const periodType = document.getElementById('periodType');
+    periodType.innerHTML = '';
+
+    const opt = document.createElement('option');
+    opt.value = periodTypeValue;
+    opt.text = periodTypeValue;
+
+    periodType.appendChild(opt);
+    periodType.value = periodTypeValue;
+
+    updatePeriods();
+});
 /* ---------------------------
    BI-WEEKLY FIX (IMPORTANT)
 ----------------------------*/
@@ -352,6 +388,21 @@ async function loadAnalytics() {
         btn.textContent = 'Load Data';
         btn.disabled = false;
     }
+}
+function getPeriodTypeFromMeasure(measureType) {
+    const map = {
+        'prg': 'yearly',
+        'prc': 'yearly',
+        'pjg': 'yearly',
+        'pjc': 'yearly',
+        'prp': 'six-monthly',
+        'pjp': 'monthly',
+        'pjw': 'monthly',
+        'pja': 'biweekly'
+    };
+
+    const norm = (measureType || '').trim().toLowerCase();
+    return map[norm] || 'yearly';
 }
 
 /* ---------------------------
