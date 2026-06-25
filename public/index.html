@@ -303,31 +303,51 @@ function updatePeriods() {
    LOAD INITIAL DATA
 ----------------------------*/
 async function loadData() {
-    const config = await fetch('/api/config').then(r => r.json());
-    PERIOD_TYPE_ATTR_ID = config.periodTypeAttributeId;
-    RESULT_TYPE_ATTR_ID = config.resultTypeAttributeId; 
+    const btnLoad = document.getElementById('btnLoad');
+    btnLoad.innerHTML = '<span class="spinner"></span> Loading…';
+    btnLoad.disabled = true;
 
-    groupSets = await fetch('/api/dataElementGroupSets').then(r => r.json());
-    const ous = await fetch('/api/organisationUnits').then(r => r.json());
+    try {
+        const [config, fetchedGroupSets, ous] = await Promise.all([
+            fetch('/api/config').then(r => r.json()),
+            fetch('/api/dataElementGroupSets').then(async r => {
+                if (!r.ok) throw new Error(`GroupSets failed: ${await r.text()}`);
+                return r.json();
+            }),
+            fetch('/api/organisationUnits').then(async r => {
+                if (!r.ok) throw new Error(`OrgUnits failed: ${await r.text()}`);
+                return r.json();
+            })
+        ]);
 
-    const deGroupSet = document.getElementById('deGroupSet');
+        PERIOD_TYPE_ATTR_ID = config.periodTypeAttributeId;
+        RESULT_TYPE_ATTR_ID = config.resultTypeAttributeId;
+        groupSets = fetchedGroupSets;
 
-    groupSets.forEach(gs => {
-        const opt = document.createElement('option');
-        opt.value = gs.id;
-        opt.text = gs.displayName;
-        deGroupSet.appendChild(opt);
-    });
+        const deGroupSet = document.getElementById('deGroupSet');
+        groupSets.forEach(gs => {
+            const opt = document.createElement('option');
+            opt.value = gs.id;
+            opt.text = gs.displayName;
+            deGroupSet.appendChild(opt);
+        });
 
-    const orgUnit = document.getElementById('orgUnit');
-    ous.forEach(o => {
-        const opt = document.createElement('option');
-        opt.value = o.id;
-        opt.text = o.displayName;
-        orgUnit.appendChild(opt);
-    });
+        const orgUnit = document.getElementById('orgUnit');
+        ous.forEach(o => {
+            const opt = document.createElement('option');
+            opt.value = o.id;
+            opt.text = o.displayName;
+            orgUnit.appendChild(opt);
+        });
 
-    deGroupSet.dispatchEvent(new Event('change'));
+        deGroupSet.dispatchEvent(new Event('change'));
+    } catch (e) {
+        console.error('loadData error:', e);
+        showToast('error', 'Load Failed', e.message || 'Could not load data from DHIS2.');
+    } finally {
+        btnLoad.textContent = 'Load Data';
+        btnLoad.disabled = false;
+    }
 }
 
 /* ---------------------------

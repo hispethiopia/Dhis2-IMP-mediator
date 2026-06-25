@@ -26,22 +26,18 @@ let failureCount = 0;
 /* =========================
    🔐 DHIS2 LOGIN
 ========================= */
-app.post('/api/login', async (req, res) => {
+app.post('/api/login', (req, res) => {
     const { username, password } = req.body;
-    try {
-        await axios.get(`${DHIS2_BASE_URL}/me`, {
-            auth: { username, password }
-        });
-        res.json({ ok: true });
-    } catch (err) {
-        res.status(401).json({ error: 'Invalid credentials' });
+    if (username === USERNAME && password === PASSWORD) {
+        return res.json({ ok: true });
     }
+    res.status(401).json({ error: 'Invalid credentials' });
 });
 
 /* =========================
    📦 FETCH GROUP SETS
 ========================= */
-app.get('/api/dataElementGroupSets', async (req, res) => {
+app.get('/api/dataElementGroupSets', async (_req, res) => {
     try {
         const response = await axios.get(
             `${DHIS2_BASE_URL}/dataElementGroupSets`,
@@ -55,8 +51,8 @@ app.get('/api/dataElementGroupSets', async (req, res) => {
         );
         res.json(response.data.dataElementGroupSets);
     } catch (err) {
-        console.error(err.message);
-        res.status(500).json({ error: err.message });
+        console.error('❌ GroupSets error:', err.response?.data || err.message);
+        res.status(500).json({ error: err.response?.data || err.message });
     }
 });
 
@@ -432,16 +428,18 @@ async function transformToPayload(data) {
 
     const grouped = {};
 
+    const VALID_COS = new Set([
+        'Physical-Actual', 'Physical-Target',
+        'Men', 'Women', 'Youth',
+        'Budget-Actual', 'Budget-Target',
+        'default'
+    ]);
+
     data.forEach(row => {
         console.log('➡️ ROW:', row);
         if (!row) return;
 
-        const isValid =
-            row.co === 'Physical-Actual' ||
-            row.co === 'Physical-Target' ||
-            row.co === 'default';
-
-        if (!isValid) {
+        if (!VALID_COS.has(row.co)) {
             console.log('⛔ Skipped CO:', row.co);
             return;
         }
@@ -469,10 +467,15 @@ async function transformToPayload(data) {
 
         if (!grouped[key]) {
             grouped[key] = {
-                actual: 0,
-                target: 0,
+                actual:        null,
+                target:        null,
+                actual_male:   null,
+                actual_female: null,
+                actual_youth:  null,
+                actual_budget: null,
+                target_budget: null,
                 imp_id,
-                measure_type,      // raw string from cwEYtMqAfie e.g. "Project Output"
+                measure_type,
                 implementing_unit,
                 pe:        row.pe,
                 raw_value: row.value
@@ -480,8 +483,13 @@ async function transformToPayload(data) {
         }
 
         const value = Number(row.value || 0);
-        if (row.co === 'Physical-Actual') grouped[key].actual += value;
-        if (row.co === 'Physical-Target') grouped[key].target += value;
+        if (row.co === 'Physical-Actual') grouped[key].actual = (grouped[key].actual ?? 0) + value;
+        if (row.co === 'Physical-Target') grouped[key].target = (grouped[key].target ?? 0) + value;
+        if (row.co === 'Men')             grouped[key].actual_male   = value;
+        if (row.co === 'Women')           grouped[key].actual_female = value;
+        if (row.co === 'Youth')           grouped[key].actual_youth  = value;
+        if (row.co === 'Budget-Actual')   grouped[key].actual_budget = value;
+        if (row.co === 'Budget-Target')   grouped[key].target_budget = value;
     });
 
     return Object.values(grouped);
@@ -686,14 +694,19 @@ app.post('/api/pushData', async (req, res) => {
                         };
 
                     } else {
-                        const filteredFields = Object.fromEntries(
-                            Object.entries(allFields).filter(([k, v]) => k in matchedPeriod && v !== null)
+                        // Send all fields (including null) to allow clearing values
+                        const updateFields = Object.fromEntries(
+                            Object.entries(allFields).filter(([k]) => k in matchedPeriod)
                         );
+
+                        // Update only the matched period level; strip children so sub-period
+                        // 0-values don't override the annual entry in the IMP UI
                         const updatedPeriod = {
                             ...matchedPeriod,
                             name:             periodName,
                             period_frequency: periodFreq,
-                            ...filteredFields
+                            ...updateFields,
+                            children:         null
                         };
 
                         function replacePeriod(distributions) {
