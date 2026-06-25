@@ -583,7 +583,11 @@ app.post('/api/pushData', async (req, res) => {
                 // 📅 Build period dates based on period frequency
                 let targetStartDate, targetEndDate, periodName;
 
-                if (periodFreq === 'annually') {
+                // A 4-digit DHIS2 period (e.g. "2025") is always a fiscal year — use EFY
+                // conversion regardless of what the measure's periodFreq says
+                const isYearOnly = /^\d{4}$/.test(String(item.pe));
+
+                if (isYearOnly || periodFreq === 'annually') {
                     targetStartDate = `${Number(item.pe) - 1}-07-08`;
                     targetEndDate   = `${item.pe}-07-07`;
                     const efyYear   = Number(item.pe) - 8;
@@ -637,6 +641,10 @@ app.post('/api/pushData', async (req, res) => {
                     console.log(`📅 [biweekly] pe=${item.pe} → ${periodName}`);
                 }
 
+                // When DHIS2 sends a yearly period, the IMP period_frequency must be
+                // 'annually' regardless of the measure's own periodFreq
+                const effectivePeriodFreq = isYearOnly ? 'annually' : periodFreq;
+
                 // ✅ All possible fields to update
                 const allFields = {
                     actual:        item.actual        ?? null,
@@ -653,11 +661,17 @@ app.post('/api/pushData', async (req, res) => {
 
                 let patchPayload;
 
+                const filteredFields = Object.fromEntries(
+                    Object.entries(allFields).filter(([, v]) => v !== null)
+                );
+
+                // Strip stale year-only entries (e.g. "2025") created by the old fallback path
+                const cleanDistributions = (existing.period_distributions || []).filter(
+                    dist => !/^\d{4}$/.test(dist.name)
+                );
+
                 if (!existing.period_distributions) {
                     console.log(`📋 No period_distributions yet, creating: ${periodName}`);
-                    const filteredFields = Object.fromEntries(
-                        Object.entries(allFields).filter(([, v]) => v !== null)
-                    );
                     patchPayload = {
                         implementing_unit,
                         [measureKey]: measureValue,
@@ -665,47 +679,39 @@ app.post('/api/pushData', async (req, res) => {
                             name:             periodName,
                             start_date:       targetStartDate,
                             end_date:         targetEndDate,
-                            period_frequency: periodFreq,
+                            period_frequency: effectivePeriodFreq,
                             ...filteredFields
                         }]
                     };
 
                 } else {
-                    const matchedPeriod = findPeriod(existing.period_distributions, targetStartDate, targetEndDate);
+                    const matchedPeriod = findPeriod(cleanDistributions, targetStartDate, targetEndDate);
 
                     if (!matchedPeriod) {
                         console.log(`➕ Adding new period: ${periodName}`);
-                        const filteredFields = Object.fromEntries(
-                            Object.entries(allFields).filter(([, v]) => v !== null)
-                        );
                         patchPayload = {
                             implementing_unit,
                             [measureKey]: measureValue,
                             period_distributions: [
-                                ...existing.period_distributions,
+                                ...cleanDistributions,
                                 {
                                     name:             periodName,
                                     start_date:       targetStartDate,
                                     end_date:         targetEndDate,
-                                    period_frequency: periodFreq,
+                                    period_frequency: effectivePeriodFreq,
                                     ...filteredFields
                                 }
                             ]
                         };
 
                     } else {
-                        // Send all fields (including null) to allow clearing values
-                        const updateFields = Object.fromEntries(
-                            Object.entries(allFields).filter(([k]) => k in matchedPeriod)
-                        );
-
-                        // Update only the matched period level; strip children so sub-period
-                        // 0-values don't override the annual entry in the IMP UI
+                        // Base from existing period, override with all non-null DHIS2 values
+                        // (don't filter by matchedPeriod keys — disagg fields may not exist yet)
                         const updatedPeriod = {
                             ...matchedPeriod,
                             name:             periodName,
-                            period_frequency: periodFreq,
-                            ...updateFields,
+                            period_frequency: effectivePeriodFreq,
+                            ...filteredFields,
                             children:         null
                         };
 
@@ -724,7 +730,7 @@ app.post('/api/pushData', async (req, res) => {
                         patchPayload = {
                             implementing_unit,
                             [measureKey]: measureValue,
-                            period_distributions: replacePeriod(existing.period_distributions)
+                            period_distributions: replacePeriod(cleanDistributions)
                         };
                     }
                 }
